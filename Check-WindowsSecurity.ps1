@@ -531,7 +531,7 @@ Check-LAPS
 
 # Exportar resultados a Excel
 $hostname = $env:COMPUTERNAME
-$archivoExcel = "Resultados_LAPS.xlsx"
+$archivoExcel = "Resultados_hardening.xlsx"
 $resultados | Export-Excel -Path $archivoExcel -AutoSize -Title "Reporte de Hardening - $hostname"
 
 Write-Output "Reporte exportado a: $archivoExcel"
