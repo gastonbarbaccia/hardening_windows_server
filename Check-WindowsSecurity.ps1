@@ -1,5 +1,5 @@
-# Importar módulo ImportExcel
-Import-Module ImportExcel
+# Lista para almacenar los resultados
+$resultados = @()
 
 # Funcion para manejar la salida de resultados
 function Write-Report {
@@ -8,6 +8,13 @@ function Write-Report {
         [string]$Result,
         [string]$Recommendation
     )
+
+    # Agregar resultado a la lista
+    $resultados += [PSCustomObject]@{
+        Componente = $TestName
+        Estado     = $Result
+        Mensaje    = $Recommendation
+    }
 
     Write-Output "-----------------------------"
     Write-Output "Prueba: $TestName"
@@ -531,7 +538,8 @@ Check-LAPS
 
 # Exportar resultados a Excel
 $hostname = $env:COMPUTERNAME
-$archivoExcel = "Resultados_hardening.xlsx"
-$resultados | Export-Excel -Path $archivoExcel -AutoSize -Title "Reporte de Hardening - $hostname"
+# Guardar los resultados en un archivo CSV
+$archivoCSV = "Reporte_Seguridad_Hardening_$hostname.csv"
+$resultados | Export-Csv -Path $archivoCSV -NoTypeInformation -Encoding UTF8
 
-Write-Output "Reporte exportado a: $archivoExcel"
+Write-Output "Reporte exportado a: $archivoCSV"
