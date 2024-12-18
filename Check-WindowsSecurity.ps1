@@ -172,18 +172,6 @@ function Check-TLS {
 }
 
 
-# Verificar si Windows Update está habilitado y configurado para actualizaciones automáticas.
-
-# Función para mostrar los mensajes en el formato requerido
-function Write-Report {
-    param (
-        [string]$Component,
-        [string]$Status,
-        [string]$Message
-    )
-    Write-Output "[$Component] [$Status] - $Message"
-}
-
 # Función para verificar el estado del servicio de Windows Update
 function Check-WindowsUpdateService {
     $serviceName = "wuauserv"
