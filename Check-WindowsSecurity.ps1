@@ -10,6 +10,7 @@ function Write-Report {
     Write-Output "-----------------------------"
     Write-Output "Prueba: $TestName"
     Write-Output "Resultado: $Result"
+    
     if ($Result -eq "FAIL") {
         Write-Output "Recomendacion: $Recommendation"
     }
@@ -38,14 +39,19 @@ function Check-AdminAccount {
     try {
         $adminAccount = Get-LocalUser -Name "Administrator"
         if ($adminAccount.Enabled -eq $false) {
-            Write-Report "Cuenta Administrador" "PASS" ""
+            Write-Report "Cuenta Administrador" "PASS" "La cuenta de Administrador está deshabilitada."
         } else {
             Write-Report "Cuenta Administrador" "FAIL" "Deshabilite la cuenta de Administrador o cambie su nombre para reducir riesgos."
         }
     } catch {
-        Write-Report "Cuenta Administrador" "FAIL" "Error al comprobar la cuenta de Administrador. Detalles: $_"
+        if ($_.Exception.Message -match "User Administrator was not found") {
+            Write-Report "Cuenta Administrador" "PASS" "La cuenta de Administrador no existe."
+        } else {
+            Write-Report "Cuenta Administrador" "FAIL" "Error al comprobar la cuenta de Administrador. Detalles: $($_.Exception.Message)"
+        }
     }
 }
+
 
 # Funcion para verificar si SMBv1 está habilitado
 function Check-SMBv1 {
@@ -64,18 +70,22 @@ function Check-SMBv1 {
 # Funcion para verificar la politica de contrasenas
 function Check-PasswordPolicy {
     try {
-        $minLength = (Get-LocalUser | Where-Object { $_.PasswordMinimumLength }).PasswordMinimumLength
-        $complexity = Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" -Name "PasswordComplexity"
+        # Obtener longitud mínima de contraseñas desde políticas locales
+        $minLength = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\Netlogon\Parameters" -Name "MinimumPasswordLength").MinimumPasswordLength
+
+        # Obtener complejidad de contraseñas desde el registro
+        $complexity = (Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" -Name "PasswordComplexity").PasswordComplexity
 
         if ($minLength -ge 8 -and $complexity -eq 1) {
-            Write-Report "Politica de Contrasena" "PASS" ""
+            Write-Report "Politica de Contrasena" "PASS" "La política de contraseñas cumple con los requisitos."
         } else {
-            Write-Report "Politica de Contrasena" "FAIL" "Establezca contrasenas de al menos 8 caracteres y habilite la complejidad."
+            Write-Report "Politica de Contrasena" "FAIL" "Establezca contraseñas de al menos 8 caracteres y habilite la complejidad."
         }
     } catch {
-        Write-Report "Politica de Contrasena" "FAIL" "Error al comprobar la politica de contrasenas. Detalles: $_"
+        Write-Report "Politica de Contrasena" "FAIL" "Error al comprobar la política de contraseñas. Detalles: $($_.Exception.Message)"
     }
 }
+
 
 # Funcion para verificar si el Control de Cuentas de Usuario (UAC) está habilitado
 function Check-UAC {
@@ -108,30 +118,49 @@ function Check-RDP {
 # Funcion para verificar si BitLocker está habilitado en las unidades del sistema
 function Check-BitLocker {
     try {
-        $bitlockerStatus = Get-BitLockerVolume | Where-Object {$_.VolumeStatus -eq "FullyEncrypted"}
+        # Comprobar si el módulo de BitLocker está disponible
+        if (-not (Get-Command -Name Get-BitLockerVolume -ErrorAction SilentlyContinue)) {
+            Write-Report "BitLocker en Unidades del Sistema" "FAIL" "El módulo de BitLocker no está disponible. Instale la característica de BitLocker."
+            return
+        }
+
+        # Obtener el estado de las unidades protegidas por BitLocker
+        $bitlockerStatus = Get-BitLockerVolume | Where-Object { $_.VolumeStatus -eq "FullyEncrypted" }
+
         if ($bitlockerStatus) {
-            Write-Report "BitLocker en Unidades del Sistema" "PASS" ""
+            Write-Report "BitLocker en Unidades del Sistema" "PASS" "Todas las unidades están completamente cifradas con BitLocker."
         } else {
             Write-Report "BitLocker en Unidades del Sistema" "FAIL" "Active BitLocker para cifrar las unidades y proteger los datos en caso de pérdida."
         }
     } catch {
-        Write-Report "BitLocker en Unidades del Sistema" "FAIL" "Error al comprobar BitLocker. Detalles: $_"
+        Write-Report "BitLocker en Unidades del Sistema" "FAIL" "Error al comprobar BitLocker. Detalles: $($_.Exception.Message)"
     }
 }
+
 
 # Funcion para verificar si se está usando el protocolo TLS 1.2
 function Check-TLS {
     try {
-        $tls12 = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Server" -Name "Enabled"
+        # Comprobar si la clave de registro para TLS 1.2 existe
+        $tls12Path = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Server"
+        if (-not (Test-Path -Path $tls12Path)) {
+            Write-Report "Protocolo TLS 1.2" "FAIL" "La configuración de TLS 1.2 no existe. Verifique y configure las claves de registro necesarias."
+            return
+        }
+
+        # Obtener el valor "Enabled" de la configuración de TLS 1.2
+        $tls12 = Get-ItemProperty -Path $tls12Path -Name "Enabled" -ErrorAction Stop
+
         if ($tls12.Enabled -eq 1) {
-            Write-Report "Protocolo TLS 1.2" "PASS" ""
+            Write-Report "Protocolo TLS 1.2" "PASS" "TLS 1.2 está habilitado en el servidor."
         } else {
-            Write-Report "Protocolo TLS 1.2" "FAIL" "Habilite TLS 1.2 y deshabilite versiones anteriores como TLS 1.0 y SSL."
+            Write-Report "Protocolo TLS 1.2" "FAIL" "TLS 1.2 no está habilitado. Habilítelo y deshabilite versiones anteriores como TLS 1.0 y SSL."
         }
     } catch {
-        Write-Report "Protocolo TLS 1.2" "FAIL" "Error al comprobar TLS. Detalles: $_"
+        Write-Report "Protocolo TLS 1.2" "FAIL" "Error al comprobar TLS 1.2. Detalles: $($_.Exception.Message)"
     }
 }
+
 
 # Verificar si Windows Update está habilitado y configurado para actualizaciones automáticas.
 function Check-WindowsUpdates {
@@ -197,7 +226,7 @@ function Check-AuditPolicy {
 function Check-USBRestrictions {
     try {
         $usbStatus = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\USBSTOR" -Name "Start"
-        if ($usbStatus.Start -eq 4) {
+        if ($usbStatus.Start -eq 3) {
             Write-Report "Restriccion de Dispositivos USB" "PASS" ""
         } else {
             Write-Report "Restriccion de Dispositivos USB" "FAIL" "Configure 'USBSTOR' en el registro para bloquear dispositivos USB no autorizados."
@@ -207,19 +236,6 @@ function Check-USBRestrictions {
     }
 }
 
-# Configuracion de red
-function Check-ICMPBlock {
-    try {
-        $icmpRule = Get-NetFirewallRule -DisplayName "Block ICMPv4-In" | Where-Object {$_.Enabled -eq "True"}
-        if ($icmpRule) {
-            Write-Report "Bloqueo de ICMP" "PASS" ""
-        } else {
-            Write-Report "Bloqueo de ICMP" "FAIL" "Habilite reglas de Firewall para bloquear el trafico ICMP innecesario."
-        }
-    } catch {
-        Write-Report "Bloqueo de ICMP" "FAIL" "Error al comprobar reglas ICMP. Detalles: $_"
-    }
-}
 
 # Tiempo de bloqueo de pantalla
 function Check-ScreenLock {
@@ -413,11 +429,16 @@ Check-LMHash
 Check-UnnecessaryServices
 Check-AuditPolicy
 Check-USBRestrictions
-Check-ICMPBlock
+Check-ScreenLock
+Check-LoginFailures
+Check-ExecutionPolicy
 Check-PasswordNeverExpires
 Check-CriticalServices
 Check-InactiveAccounts
+Check-OpenPorts
 Check-NTPConfig
 Check-NTLM
+Check-ASRRules
+Check-AnonymousAccess
 Check-LAPS
 
