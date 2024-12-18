@@ -70,21 +70,31 @@ function Check-SMBv1 {
 # Funcion para verificar la politica de contrasenas
 function Check-PasswordPolicy {
     try {
-        # Obtener longitud mínima de contraseñas desde políticas locales
-        $minLength = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\Netlogon\Parameters" -Name "MinimumPasswordLength").MinimumPasswordLength
+        # Ruta al registro de las políticas de cuenta
+        $policyPath = "HKLM:\SYSTEM\CurrentControlSet\Services\Netlogon\Parameters"
 
-        # Obtener complejidad de contraseñas desde el registro
-        $complexity = (Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" -Name "PasswordComplexity").PasswordComplexity
+        # Consultar configuraciones de la política de contraseñas
+        $minLength = (Get-ItemProperty -Path $policyPath -Name "MinimumPasswordLength" -ErrorAction SilentlyContinue).MinimumPasswordLength
+        $maxAge = (Get-ItemProperty -Path $policyPath -Name "MaximumPasswordAge" -ErrorAction SilentlyContinue).MaximumPasswordAge
+        $complexity = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\Netlogon\Parameters" -Name "PasswordComplexity" -ErrorAction SilentlyContinue).PasswordComplexity
 
+        # Validar si las políticas están configuradas
         if ($minLength -ge 8 -and $complexity -eq 1) {
-            Write-Report "Politica de Contrasena" "PASS" "La política de contraseñas cumple con los requisitos."
+            Write-Output "Política de contraseñas: PASS - Mínimo: $minLength, Complejidad: Habilitada"
         } else {
-            Write-Report "Politica de Contrasena" "FAIL" "Establezca contraseñas de al menos 8 caracteres y habilite la complejidad."
+            Write-Output "Política de contraseñas: FAIL - Requerimientos no cumplen."
+        }
+
+        if ($maxAge) {
+            Write-Output "Máximo tiempo de vida de contraseña: $maxAge días"
+        } else {
+            Write-Output "No se pudo determinar el tiempo de vida máximo de las contraseñas."
         }
     } catch {
-        Write-Report "Politica de Contrasena" "FAIL" "Error al comprobar la política de contraseñas. Detalles: $($_.Exception.Message)"
+        Write-Output "Error al comprobar la política de contraseñas. Detalles: $($_.Exception.Message)"
     }
 }
+
 
 
 # Funcion para verificar si el Control de Cuentas de Usuario (UAC) está habilitado
@@ -165,16 +175,29 @@ function Check-TLS {
 # Verificar si Windows Update está habilitado y configurado para actualizaciones automáticas.
 function Check-WindowsUpdates {
     try {
-        $updateStatus = Get-ItemProperty -Path "HKLM:\Software\Policies\Microsoft\Windows\WindowsUpdate\AU" -Name "NoAutoUpdate"
+        $updatePath = "HKLM:\Software\Policies\Microsoft\Windows\WindowsUpdate\AU"
+
+        # Verificar si la clave existe
+        if (-not (Test-Path -Path $updatePath)) {
+            Write-Report "Actualizaciones Automáticas" "FAIL" "No se encontró la configuración de actualizaciones automáticas. Verifique si están administradas por GPO."
+            return
+        }
+
+        # Obtener el estado de las actualizaciones automáticas
+        $updateStatus = Get-ItemProperty -Path $updatePath -Name "NoAutoUpdate" -ErrorAction Stop
+
         if ($updateStatus.NoAutoUpdate -eq 0) {
-            Write-Report "Actualizaciones Automaticas" "PASS" ""
+            Write-Report "Actualizaciones Automáticas" "PASS" "Las actualizaciones automáticas están habilitadas."
+        } elseif ($updateStatus.NoAutoUpdate -eq 1) {
+            Write-Report "Actualizaciones Automáticas" "FAIL" "Las actualizaciones automáticas están deshabilitadas. Habilítelas para garantizar la instalación de parches críticos."
         } else {
-            Write-Report "Actualizaciones Automaticas" "FAIL" "Habilite las actualizaciones automáticas para garantizar la instalacion de parches criticos."
+            Write-Report "Actualizaciones Automáticas" "FAIL" "Estado desconocido para las actualizaciones automáticas. Verifique la configuración manualmente."
         }
     } catch {
-        Write-Report "Actualizaciones Automaticas" "FAIL" "Error al comprobar el estado de Windows Update. Detalles: $_"
+        Write-Report "Actualizaciones Automáticas" "FAIL" "Error al comprobar el estado de Windows Update. Detalles: $($_.Exception.Message)"
     }
 }
+
 
 # Configuracion del registro (Restricciones criticas)
 function Check-LMHash {
@@ -240,30 +263,55 @@ function Check-USBRestrictions {
 # Tiempo de bloqueo de pantalla
 function Check-ScreenLock {
     try {
-        $screenLock = Get-ItemProperty -Path "HKCU:\Control Panel\Desktop" -Name "ScreenSaveTimeOut"
-        if ($screenLock.ScreenSaveTimeOut -le 900) { # 900 segundos = 15 minutos
-            Write-Report "Bloqueo Automático de Pantalla" "PASS" ""
+        $keyPath = "HKCU:\Control Panel\Desktop"
+
+        # Verificar si la clave existe
+        if (-not (Test-Path -Path $keyPath)) {
+            Write-Report "Bloqueo Automático de Pantalla" "FAIL" "No se encontró la configuración de bloqueo automático. Verifique si está administrada por políticas de grupo."
+            return
+        }
+
+        # Obtener el tiempo de espera del protector de pantalla
+        $screenLock = Get-ItemProperty -Path $keyPath -Name "ScreenSaveTimeOut" -ErrorAction SilentlyContinue
+
+        if ($null -eq $screenLock.ScreenSaveTimeOut) {
+            Write-Report "Bloqueo Automático de Pantalla" "FAIL" "El tiempo de bloqueo automático no está configurado. Configure un tiempo de espera de 15 minutos o menos."
+        } elseif ($screenLock.ScreenSaveTimeOut -le 900) { # 900 segundos = 15 minutos
+            Write-Report "Bloqueo Automático de Pantalla" "PASS" "El bloqueo automático de pantalla está configurado en $($screenLock.ScreenSaveTimeOut) segundos."
         } else {
-            Write-Report "Bloqueo Automático de Pantalla" "FAIL" "Configure el bloqueo automático de pantalla después de 15 minutos o menos."
+            Write-Report "Bloqueo Automático de Pantalla" "FAIL" "El tiempo de bloqueo automático está configurado en $($screenLock.ScreenSaveTimeOut) segundos. Configure un tiempo de 15 minutos o menos."
         }
     } catch {
-        Write-Report "Bloqueo Automático de Pantalla" "FAIL" "Error al comprobar el tiempo de bloqueo. Detalles: $_"
+        Write-Report "Bloqueo Automático de Pantalla" "FAIL" "Error al comprobar el tiempo de bloqueo. Detalles: $($_.Exception.Message)"
     }
 }
+
 
 # Configuracion de politicas locales
 function Check-LoginFailures {
     try {
-        $lockoutThreshold = Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" -Name "LockoutBadCount"
-        if ($lockoutThreshold -le 5) {
-            Write-Report "Bloqueo tras Intentos Fallidos" "PASS" ""
+        # Ejecutar el comando para obtener la configuración de cuentas
+        $accountPolicy = net accounts | Out-String
+
+        # Extraer el umbral de bloqueo por intentos fallidos
+        if ($accountPolicy -match "Bloqueo tras.*:\s+(\d+)") {
+            $lockoutThreshold = [int]$matches[1]
+
+            if ($lockoutThreshold -le 5 -and $lockoutThreshold -gt 0) {
+                Write-Report "Bloqueo tras Intentos Fallidos" "PASS" "El bloqueo automático está configurado tras $lockoutThreshold intentos fallidos."
+            } elseif ($lockoutThreshold -eq 0) {
+                Write-Report "Bloqueo tras Intentos Fallidos" "FAIL" "No se ha configurado un bloqueo automático tras intentos fallidos. Configure un límite de 5 intentos o menos."
+            } else {
+                Write-Report "Bloqueo tras Intentos Fallidos" "FAIL" "El bloqueo automático está configurado tras $lockoutThreshold intentos fallidos. Reduzca el límite a 5 intentos o menos."
+            }
         } else {
-            Write-Report "Bloqueo tras Intentos Fallidos" "FAIL" "Configure el bloqueo automático tras 5 intentos fallidos para prevenir ataques de fuerza bruta."
+            Write-Report "Bloqueo tras Intentos Fallidos" "FAIL" "No se pudo obtener el umbral de bloqueo. Verifique manualmente las políticas de cuenta."
         }
     } catch {
-        Write-Report "Bloqueo tras Intentos Fallidos" "FAIL" "Error al comprobar el limite de intentos fallidos. Detalles: $_"
+        Write-Report "Bloqueo tras Intentos Fallidos" "FAIL" "Error al comprobar el límite de intentos fallidos. Detalles: $($_.Exception.Message)"
     }
 }
+
 
 # Validar y configurar la proteccion de scripts y macros
 function Check-ExecutionPolicy {
@@ -403,16 +451,34 @@ function Check-AnonymousAccess {
 # Revisa si el servidor utiliza LAPS (Local Administrator Password Solution) para proteger cuentas locales.
 function Check-LAPS {
     try {
-        $laps = Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\LAPS" -Name "Enabled"
-        if ($laps.Enabled -eq 1) {
-            Write-Report "LAPS habilitado" "PASS" "LAPS está habilitado para proteger contrasenas de cuentas locales."
+        # Validar si LAPS está configurado en la clave esperada
+        $lapsKey = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\LAPS"
+        if (Test-Path $lapsKey) {
+            $laps = Get-ItemProperty -Path $lapsKey -Name "Enabled" -ErrorAction Stop
+            if ($laps.Enabled -eq 1) {
+                Write-Report "LAPS habilitado" "PASS" "LAPS está habilitado para proteger contraseñas de cuentas locales."
+            } else {
+                Write-Report "LAPS habilitado" "FAIL" "Habilite LAPS para gestionar contraseñas locales de forma segura."
+            }
         } else {
-            Write-Report "LAPS habilitado" "FAIL" "Habilite LAPS para gestionar contrasenas locales de forma segura."
+            # Buscar en la clave alternativa
+            $lapsPolicyKey = "HKLM:\SOFTWARE\Policies\Microsoft Services\AdmPwd"
+            if (Test-Path $lapsPolicyKey) {
+                $lapsPolicy = Get-ItemProperty -Path $lapsPolicyKey -Name "AdmPwdEnabled" -ErrorAction Stop
+                if ($lapsPolicy.AdmPwdEnabled -eq 1) {
+                    Write-Report "LAPS habilitado" "PASS" "LAPS está habilitado mediante políticas para proteger contraseñas locales."
+                } else {
+                    Write-Report "LAPS habilitado" "FAIL" "LAPS no está habilitado mediante políticas. Habilítelo para mayor seguridad."
+                }
+            } else {
+                Write-Report "LAPS habilitado" "FAIL" "No se encontraron configuraciones de LAPS en este servidor."
+            }
         }
     } catch {
-        Write-Report "LAPS habilitado" "FAIL" "Error al comprobar LAPS. Detalles: $_"
+        Write-Report "LAPS habilitado" "FAIL" "Error al comprobar LAPS. Detalles: $($_.Exception.Message)"
     }
 }
+
 
 
 # Ejecutar todas las verificaciones
