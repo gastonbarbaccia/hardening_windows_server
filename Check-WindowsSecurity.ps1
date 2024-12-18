@@ -1,3 +1,5 @@
+# Importar módulo ImportExcel
+Import-Module ImportExcel
 
 # Funcion para manejar la salida de resultados
 function Write-Report {
@@ -527,3 +529,9 @@ Check-ASRRules
 Check-AnonymousAccess
 Check-LAPS
 
+# Exportar resultados a Excel
+$hostname = $env:COMPUTERNAME
+$archivoExcel = "Resultados_LAPS.xlsx"
+$resultados | Export-Excel -Path $archivoExcel -AutoSize -Title "Reporte de Hardening - $hostname"
+
+Write-Output "Reporte exportado a: $archivoExcel"
