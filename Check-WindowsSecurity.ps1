@@ -173,28 +173,57 @@ function Check-TLS {
 
 
 # Verificar si Windows Update está habilitado y configurado para actualizaciones automáticas.
-function Check-WindowsUpdates {
-    try {
-        $updatePath = "HKLM:\Software\Policies\Microsoft\Windows\WindowsUpdate\AU"
 
-        # Verificar si la clave existe
-        if (-not (Test-Path -Path $updatePath)) {
-            Write-Report "Actualizaciones Automáticas" "FAIL" "No se encontró la configuración de actualizaciones automáticas. Verifique si están administradas por GPO."
-            return
-        }
+# Función para mostrar los mensajes en el formato requerido
+function Write-Report {
+    param (
+        [string]$Component,
+        [string]$Status,
+        [string]$Message
+    )
+    Write-Output "[$Component] [$Status] - $Message"
+}
 
-        # Obtener el estado de las actualizaciones automáticas
-        $updateStatus = Get-ItemProperty -Path $updatePath -Name "NoAutoUpdate" -ErrorAction Stop
+# Función para verificar el estado del servicio de Windows Update
+function Check-WindowsUpdateService {
+    $serviceName = "wuauserv"
+    $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
 
-        if ($updateStatus.NoAutoUpdate -eq 0) {
-            Write-Report "Actualizaciones Automáticas" "PASS" "Las actualizaciones automáticas están habilitadas."
-        } elseif ($updateStatus.NoAutoUpdate -eq 1) {
-            Write-Report "Actualizaciones Automáticas" "FAIL" "Las actualizaciones automáticas están deshabilitadas. Habilítelas para garantizar la instalación de parches críticos."
+    if ($null -eq $service) {
+        Write-Report "Windows Update Service" "FAIL" "El servicio $serviceName no está disponible en este sistema."
+        return $false
+    }
+
+    if ($service.Status -eq 'Running') {
+        Write-Report "Windows Update Service" "PASS" "El servicio de Windows Update está habilitado y en ejecución."
+        return $true
+    } else {
+        Write-Report "Windows Update Service" "FAIL" "El servicio de Windows Update no está habilitado o no está en ejecución."
+        return $false
+    }
+}
+
+# Función para verificar la configuración de actualizaciones automáticas
+function Check-AutomaticUpdates {
+    $registryPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update"
+    $valueName = "AUOptions"
+
+    if (Test-Path $registryPath) {
+        $autoUpdateSetting = Get-ItemProperty -Path $registryPath -Name $valueName -ErrorAction SilentlyContinue
+
+        if ($null -ne $autoUpdateSetting) {
+            switch ($autoUpdateSetting.$valueName) {
+                2 { Write-Report "Automatic Updates" "PASS" "Configurado para notificar descarga e instalación." }
+                3 { Write-Report "Automatic Updates" "PASS" "Configurado para descargar automáticamente e instalar manualmente." }
+                4 { Write-Report "Automatic Updates" "PASS" "Configurado para descargar e instalar automáticamente." }
+                5 { Write-Report "Automatic Updates" "PASS" "Configurado para notificar reinicio automático con instalación programada." }
+                Default { Write-Report "Automatic Updates" "WARN" "Configuración desconocida: $($autoUpdateSetting.$valueName)." }
+            }
         } else {
-            Write-Report "Actualizaciones Automáticas" "FAIL" "Estado desconocido para las actualizaciones automáticas. Verifique la configuración manualmente."
+            Write-Report "Automatic Updates" "FAIL" "No se pudo obtener la configuración de actualizaciones automáticas."
         }
-    } catch {
-        Write-Report "Actualizaciones Automáticas" "FAIL" "Error al comprobar el estado de Windows Update. Detalles: $($_.Exception.Message)"
+    } else {
+        Write-Report "Automatic Updates" "FAIL" "No se encontró la configuración de actualizaciones automáticas. Verifique si están administradas por GPO."
     }
 }
 
@@ -294,7 +323,8 @@ function Check-LoginFailures {
         $accountPolicy = net accounts | Out-String
 
         # Extraer el umbral de bloqueo por intentos fallidos
-        if ($accountPolicy -match "Bloqueo tras.*:\s+(\d+)") {
+        if ($accountPolicy -match "Bloqueo tras.*:\s+(\d+)" -or $accountPolicy -match "Lockout threshold.*:\s+(\d+)") {
+            
             $lockoutThreshold = [int]$matches[1]
 
             if ($lockoutThreshold -le 5 -and $lockoutThreshold -gt 0) {
@@ -490,7 +520,8 @@ Check-UAC
 Check-RDP
 Check-BitLocker
 Check-TLS
-Check-WindowsUpdates
+Check-WindowsUpdateService
+Check-AutomaticUpdates
 Check-LMHash
 Check-UnnecessaryServices
 Check-AuditPolicy
